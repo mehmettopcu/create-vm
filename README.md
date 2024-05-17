@@ -1,3 +1,8 @@
+
+## Important Notice
+
+This repository is a fork of the original [earlruby/create-vm](https://github.com/earlruby/create-vm) project. The original bash scripts have been converted to Python. Please review the changes carefully before using this version.
+
 # create-vm
 
 Quickly create guest VMs using cloud image files and cloud-init.

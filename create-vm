@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/usr/bin/python 
 
 #   create-vm - Quickly create guest VMs using cloud image files and cloud-init.
 
@@ -16,162 +16,127 @@
 #   See the License for the specific language governing permissions and
 
 # Set VM_IMAGE_DIR environment variable to override default storage location for VMs
-VM_IMAGE_DIR=${VM_IMAGE_DIR:-"${HOME}/vms/virsh"}
 
-HOSTNAME=
-IMG_FQN=
-AUTH_KEYS_FQN=
-RAM=2048
-VCPUS=2
-STORAGE=80
-BRIDGE=virbr0
-MAC=
-VERBOSE=
+import os
+import sys
+import argparse
+import subprocess
 
-usage()
-{
-cat << EOF
-usage: $0 options
-
-Quickly create guest VMs using cloud image files and cloud-init.
+def usage():
+    return """Quickly create guest VMs using cloud image files and cloud-init.
 
 OPTIONS:
    -h      Show this message
    -n      Host name (required)
    -i      Full path and name of the base .img file to use (required)
    -k      Full path and name of the ansible user's public key file (required)
-   -r      RAM in MB (defaults to ${RAM})
-   -c      Number of VCPUs (defaults to ${VCPUS})
-   -s      Amount of storage to allocate in GB (defaults to ${STORAGE})
-   -b      Bridge interface to use (defaults to ${BRIDGE})
+   -r      RAM in MB (defaults to 2048)
+   -c      Number of VCPUs (defaults to 2)
+   -s      Amount of storage to allocate in GB (defaults to 80)
+   -b      Bridge interface to use (defaults to virbr0)
    -m      MAC address to use (default is to use a randomly-generated MAC)
    -v      Verbose
-EOF
-}
+"""
 
-while getopts "h:n:i:k:r:c:s:b:m:v" option; do
-    case "${option}"
-    in
-        h)
-            usage
-            exit 0
-            ;;
-        n) HOSTNAME=${OPTARG};;
-        i) IMG_FQN=${OPTARG};;
-        k) AUTH_KEYS_FQN=${OPTARG};;
-        r) RAM=${OPTARG};;
-        c) VCPUS=${OPTARG};;
-        s) STORAGE=${OPTARG};;
-        b) BRIDGE=${OPTARG};;
-        m) MAC=${OPTARG};;
-        v) VERBOSE=1;;
-        *)
-            usage
-            exit 1
-            ;;
-    esac
-done
+def run_command(command, verbose=False):
+    if verbose:
+        print(f"Running command: {command}")
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error running command: {result.stderr}")
+        sys.exit(1)
+    return result.stdout
 
-if [[ -z $HOSTNAME ]]; then
-    echo "ERROR: Host name is required"
-    usage
-    exit 1
-fi
+def main():
+    parser = argparse.ArgumentParser(description='Quickly create guest VMs using cloud image files and cloud-init.',
+                                     formatter_class=argparse.RawTextHelpFormatter, usage=usage())
+    parser.add_argument('-n', required=True, help='Host name')
+    parser.add_argument('-i', required=True, help='Full path and name of the base .img file to use')
+    parser.add_argument('-k', required=True, help='Full path and name of the ansible user\'s public key file')
+    parser.add_argument('-r', type=int, default=2048, help='RAM in MB')
+    parser.add_argument('-c', type=int, default=2, help='Number of VCPUs')
+    parser.add_argument('-s', type=int, default=80, help='Amount of storage to allocate in GB')
+    parser.add_argument('-b', default='virbr0', help='Bridge interface to use')
+    parser.add_argument('-m', help='MAC address to use')
+    parser.add_argument('-v', action='store_true', help='Verbose')
 
-if [[ -z $IMG_FQN ]]; then
-    echo "ERROR: Base cloud image file name is required"
-    usage
-    exit 1
-fi
+    args = parser.parse_args()
 
-if [[ -z $AUTH_KEYS_FQN ]]; then
-    echo "ERROR: ansible public key file $AUTH_KEYS_FQN not found"
-    usage
-    exit 1
-fi
+    vm_image_dir = os.getenv('VM_IMAGE_DIR', os.path.expanduser('~/vms/virsh'))
 
-if ! [[ -f $IMG_FQN ]]; then
-    echo "ERROR: $IMG_FQN file not found"
-    usage
-    exit 1
-fi
+    if not os.path.isfile(args.i):
+        print(f"ERROR: {args.i} file not found")
+        sys.exit(1)
 
-if [[ -n $VERBOSE ]]; then
-    echo "Building ${HOSTNAME} in $VM_IMAGE_DIR"
-    set -xv
-fi
+    if not os.path.isfile(args.k):
+        print(f"ERROR: ansible public key file {args.k} not found")
+        sys.exit(1)
 
-mkdir -p "$VM_IMAGE_DIR"/{images,xml,init,base}
+    if args.v:
+        print(f"Building {args.n} in {vm_image_dir}")
 
-echo "Creating a qcow2 image file ${VM_IMAGE_DIR}/images/${HOSTNAME}.img that uses the cloud image file ${IMG_FQN} as its base"
-qemu-img create -b "${IMG_FQN}" -f qcow2 -F qcow2 "${VM_IMAGE_DIR}/images/${HOSTNAME}.img" "${STORAGE}G"
+    os.makedirs(f"{vm_image_dir}/images", exist_ok=True)
+    os.makedirs(f"{vm_image_dir}/xml", exist_ok=True)
+    os.makedirs(f"{vm_image_dir}/init", exist_ok=True)
+    os.makedirs(f"{vm_image_dir}/base", exist_ok=True)
 
-echo "Creating meta-data file $VM_IMAGE_DIR/init/meta-data"
-cat > "$VM_IMAGE_DIR/init/meta-data" << EOF
-instance-id: ${HOSTNAME}
-local-hostname: ${HOSTNAME}
-EOF
+    print(f"Creating a qcow2 image file {vm_image_dir}/images/{args.n}.img that uses the cloud image file {args.i} as its base")
+    run_command(f"qemu-img create -b {args.i} -f qcow2 -F qcow2 {vm_image_dir}/images/{args.n}.img {args.s}G", args.v)
 
-echo "Creating user-data file $VM_IMAGE_DIR/init/user-data"
-cat > "$VM_IMAGE_DIR/init/user-data" << EOF
-#cloud-config
+    print(f"Creating meta-data file {vm_image_dir}/init/meta-data")
+    with open(f"{vm_image_dir}/init/meta-data", 'w') as meta_data:
+        meta_data.write(f"instance-id: {args.n}\nlocal-hostname: {args.n}\n")
 
-users:
-  - name: ansible
-    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
-    groups: sudo
-    shell: /bin/bash
-    homedir: /var/ansible
-    ssh_authorized_keys:
-EOF
+    print(f"Creating user-data file {vm_image_dir}/init/user-data")
+    with open(f"{vm_image_dir}/init/user-data", 'w') as user_data:
+        user_data.write("#cloud-config\n\n")
+        user_data.write("users:\n")
+        user_data.write("  - name: ansible\n")
+        user_data.write("    sudo: [\"ALL=(ALL) NOPASSWD:ALL\"]\n")
+        user_data.write("    groups: sudo\n")
+        user_data.write("    shell: /bin/bash\n")
+        user_data.write("    homedir: /var/ansible\n")
+        user_data.write("    ssh_authorized_keys:\n")
 
-echo "Adding keys from the public key file $AUTH_KEYS_FQN to the user-data file"
-while IFS= read -r key; do
-    echo "      - $key" >> "$VM_IMAGE_DIR/init/user-data"
-done < <(grep -v '^ *#' < "$AUTH_KEYS_FQN")
+        with open(args.k, 'r') as keys:
+            for key in keys:
+                key = key.strip()
+                if not key.startswith('#'):
+                    user_data.write(f"      - {key}\n")
 
-echo "Generating the cidata ISO file $VM_IMAGE_DIR/images/${HOSTNAME}-cidata.iso"
-(
-    cd "$VM_IMAGE_DIR/init/"
-    genisoimage \
-        -output "$VM_IMAGE_DIR/images/${HOSTNAME}-cidata.img" \
-        -volid cidata \
-        -rational-rock \
-        -joliet \
-        user-data meta-data
-)
+    print(f"Generating the cidata ISO file {vm_image_dir}/images/{args.n}-cidata.iso")
+    run_command(f"genisoimage -output {vm_image_dir}/images/{args.n}-cidata.img -volid cidata -rational-rock -joliet {vm_image_dir}/init/user-data {vm_image_dir}/init/meta-data", args.v)
 
-MACCMD=
-if [[ -n $MAC ]]; then
-    MACCMD="--mac=${MAC}"
-fi
+    mac_cmd = f"--mac={args.m}" if args.m else ""
 
-virt-install \
-    --name="${HOSTNAME}" \
-    --network "bridge=${BRIDGE},model=virtio" $MACCMD \
-    --import \
-    --disk "path=${VM_IMAGE_DIR}/images/${HOSTNAME}.img,format=qcow2" \
-    --disk "path=$VM_IMAGE_DIR/images/${HOSTNAME}-cidata.img,device=cdrom" \
-    --ram="${RAM}" \
-    --vcpus="${VCPUS}" \
-    --autostart \
-    --hvm \
-    --arch x86_64 \
-    --accelerate \
-    --check-cpu \
-    --osinfo detect=on,require=off \
-    --force \
-    --watchdog=default \
-    --graphics vnc,listen=0.0.0.0 \
-    --noautoconsole \
-    --debug
+    virt_install_command = (
+        f"virt-install "
+        f"--name={args.n} "
+        f"--network bridge={args.b},model=virtio {mac_cmd} "
+        f"--import "
+        f"--disk path={vm_image_dir}/images/{args.n}.img,format=qcow2 "
+        f"--disk path={vm_image_dir}/images/{args.n}-cidata.img,device=cdrom "
+        f"--ram={args.r} "
+        f"--vcpus={args.c} "
+        f"--autostart "
+        f"--hvm "
+        f"--arch x86_64 "
+        f"--accelerate "
+        f"--check-cpu "
+        f"--force "
+        f"--watchdog=default "
+        f"--graphics vnc,listen=0.0.0.0 "
+        f"--noautoconsole "
+        f"--debug"
+    )
 
-# Make a backup of the VM's XML definition file
-virsh dumpxml "${HOSTNAME}" > "${VM_IMAGE_DIR}/xml/${HOSTNAME}.xml"
+    run_command(virt_install_command, args.v)
 
-if [ -n $VERBOSE ]; then
-    set +xv
-fi
+    # Make a backup of the VM's XML definition file
+    run_command(f"virsh dumpxml {args.n} > {vm_image_dir}/xml/{args.n}.xml", args.v)
 
-# Show running VMs
-virsh list
+    # Show running VMs
+    print(run_command("virsh list", args.v))
+
+if __name__ == "__main__":
+    main()

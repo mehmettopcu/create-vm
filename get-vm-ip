@@ -1,5 +1,4 @@
-#!/bin/bash
-
+#!/usr/bin/python 
 #   get-node-ip - Get the IP address of a VM managed by virsh.
 
 #   Copyright 2018-2023 Earl C. Ruby III
@@ -16,22 +15,45 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-usage()
-{
-cat << EOF
-usage: $0 hostname
 
-This script will take a virsh-managed VM hostname and return the IP address.
-EOF
-}
+import sys
+import subprocess
 
-HOSTNAME=$1
+def run_command(command):
+    """Run a shell command and handle errors."""
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error running command: {result.stderr.strip()}")
+        sys.exit(1)
+    return result.stdout.strip()
 
-if [[ -z $HOSTNAME ]]; then
-    echo "ERROR: Hostname is required"
-    usage
-    exit 1
-fi
+def usage():
+    print("usage: get-vm-ip hostname\n")
+    print("This script will take a virsh-managed VM hostname and return the IP address.")
 
-MAC=$(virsh -q domiflist $HOSTNAME | awk '{ print $5 }')
-arp -e | grep -i $MAC | awk '{ print $1 }'
+def main():
+    if len(sys.argv) != 2:
+        print("ERROR: Hostname is required")
+        usage()
+        sys.exit(1)
+
+    hostname = sys.argv[1]
+
+    # Get the MAC address of the VM
+    mac_command = f"virsh -q domiflist {hostname} | awk '{{{{ print $5 }}}}'"
+    mac = run_command(mac_command)
+    if not mac:
+        print(f"ERROR: Could not get MAC address for {hostname}")
+        sys.exit(1)
+
+    # Get the IP address using the MAC address
+    arp_command = f"arp -e | grep -i {mac} | awk '{{{{ print $1 }}}}'"
+    ip_address = run_command(arp_command)
+    if not ip_address:
+        print(f"ERROR: Could not find IP address for MAC {mac}")
+        sys.exit(1)
+
+    print(ip_address)
+
+if __name__ == "__main__":
+    main()
