@@ -41,7 +41,7 @@ def main():
     vm_image_dir = os.getenv('VM_IMAGE_DIR', os.path.expanduser('~/vms/virsh'))
 
     vm_image = f"{vm_image_dir}/images/{vm}.img"
-    ci_image = f"{vm_image_dir}/images/{vm}-cidata.img"
+    ci_image = f"{vm_image_dir}/images/{vm}-cidata.iso"
 
     if os.path.exists(vm_image):
         # VM exists

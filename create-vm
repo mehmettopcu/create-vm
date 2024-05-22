@@ -1,26 +1,94 @@
-#!/usr/bin/python 
-
-#   create-vm - Quickly create guest VMs using cloud image files and cloud-init.
-
-#   Copyright 2018-2023 Earl C. Ruby III
-#
-#   Licensed under the Apache License, Version 2.0 (the "License");
-#   you may not use this file except in compliance with the License.
-#   You may obtain a copy of the License at
-#
-#       http://www.apache.org/licenses/LICENSE-2.0
-#
-#   Unless required by applicable law or agreed to in writing, software
-#   distributed under the License is distributed on an "AS IS" BASIS,
-#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#   See the License for the specific language governing permissions and
-
-# Set VM_IMAGE_DIR environment variable to override default storage location for VMs
-
+#!/usr/bin/python
 import os
 import sys
 import argparse
 import subprocess
+import random
+import yaml
+
+
+class Network:
+    def __init__(self, bridge, interface, mac=None, ip=None, gateway=None):
+        self.bridge = bridge
+        self.mac = mac or self.generate_random_mac()
+        self.interface = interface
+        self.ip = ip
+        self.gateway = gateway or self.generate_gateway()
+        self.config = {
+            self.interface: {
+                "match": {
+                    "macaddress": self.mac,
+                },
+                "set-name": self.interface,
+                "dhcp4": True,
+                "nameservers": {"addresses": ["1.1.1.1", "8.8.8.8"]},
+            }
+        }
+        if self.ip:
+            self.config[self.interface]["addresses"] = [f"{self.ip}/24"] if self.ip else []
+            self.config[self.interface]["gateway4"] = f"{self.gateway}"
+            self.config[self.interface]["dhcp4"] = False
+
+    def generate_gateway(self):
+        if self.ip:
+            ip_parts = self.ip.split(".")
+            ip_parts[-1] = "1"  # Assuming last octet is for gateway
+            return ".".join(ip_parts)
+        return None
+
+    def generate_random_mac(self):
+        mac = [
+            0x52,
+            0x54,
+            0x00,
+            random.randint(0x00, 0xFF),
+            random.randint(0x00, 0xFF),
+            random.randint(0x00, 0xFF),
+        ]
+        return ":".join(map(lambda x: "%02x" % x, mac))
+
+
+class NetplanConfig:
+    def __init__(self):
+        self.bridge = "virbr0"
+        self.eth_pre = "eth"
+        self.eth_num = 0
+        self.networks = []
+        self.config = {
+            "version": 2,
+            "ethernets": {},
+        }
+
+    def arg_parser(self, args):
+        for network_args in args:
+            network_arg = network_args.split(",")
+            net_config = {}
+            for item in network_arg:
+                key, value = item.split("=")
+                net_config[key.strip()] = value.strip()
+            if "bridge" not in net_config:
+                print("ERROR: Network configuration must contain bridge")
+                sys.exit(1)
+            if "eth" not in net_config:
+                net_config["eth"] = self.get_interface()
+                self.eth_num += 1
+            network = Network(
+                bridge=net_config.get("bridge"),
+                interface=net_config.get("eth"),
+                mac=net_config.get("mac"),
+                ip=net_config.get("ip"),
+                gateway=net_config.get("gw"),
+            )
+            self.networks.append(network)
+
+    def get_interface(self):
+        return f"{self.eth_pre}{self.eth_num}"
+
+    def to_yaml(self):
+        for network in self.networks:
+            self.config["ethernets"].update(network.config)
+        return yaml.dump(self.config)
+
 
 def usage():
     return """Quickly create guest VMs using cloud image files and cloud-init.
@@ -33,10 +101,11 @@ OPTIONS:
    -r      RAM in MB (defaults to 2048)
    -c      Number of VCPUs (defaults to 2)
    -s      Amount of storage to allocate in GB (defaults to 80)
-   -b      Bridge interface to use (defaults to virbr0)
-   -m      MAC address to use (default is to use a randomly-generated MAC)
+   -b      Network configuration: bridge,mac,interface,ip,gateway (can be specified multiple times)
+   -u      Username for the VM (defaults to ansible)
    -v      Verbose
 """
+
 
 def run_command(command, verbose=False):
     if verbose:
@@ -47,77 +116,82 @@ def run_command(command, verbose=False):
         sys.exit(1)
     return result.stdout
 
-def main():
-    parser = argparse.ArgumentParser(description='Quickly create guest VMs using cloud image files and cloud-init.',
-                                     formatter_class=argparse.RawTextHelpFormatter, usage=usage())
-    parser.add_argument('-n', required=True, help='Host name')
-    parser.add_argument('-i', required=True, help='Full path and name of the base .img file to use')
-    parser.add_argument('-k', required=True, help='Full path and name of the ansible user\'s public key file')
-    parser.add_argument('-r', type=int, default=2048, help='RAM in MB')
-    parser.add_argument('-c', type=int, default=2, help='Number of VCPUs')
-    parser.add_argument('-s', type=int, default=80, help='Amount of storage to allocate in GB')
-    parser.add_argument('-b', default='virbr0', help='Bridge interface to use')
-    parser.add_argument('-m', help='MAC address to use')
-    parser.add_argument('-v', action='store_true', help='Verbose')
 
-    args = parser.parse_args()
+def create_directories(vm_image_dir, verbose=False):
+    dirs = ["images", "xml", "init", "base"]
+    for dir in dirs:
+        path = os.path.join(vm_image_dir, dir)
+        if verbose:
+            print(f"Creating directory: {path}")
+        os.makedirs(path, exist_ok=True)
 
-    vm_image_dir = os.getenv('VM_IMAGE_DIR', os.path.expanduser('~/vms/virsh'))
 
-    if not os.path.isfile(args.i):
-        print(f"ERROR: {args.i} file not found")
-        sys.exit(1)
+def create_qcow_image(vm_image_dir, base_img, vm_name, storage_size, verbose=False):
+    dest_img = os.path.join(vm_image_dir, "images", f"{vm_name}.img")
+    cmd = f"qemu-img create -b {base_img} -f qcow2 -F qcow2 {dest_img} {storage_size}G"
+    print(f"Creating qcow2 image file {dest_img} using {base_img} as base")
+    run_command(cmd, verbose)
 
-    if not os.path.isfile(args.k):
-        print(f"ERROR: ansible public key file {args.k} not found")
-        sys.exit(1)
 
-    if args.v:
-        print(f"Building {args.n} in {vm_image_dir}")
+def create_cloud_init_files(
+    vm_image_dir, vm_name, pub_key_file, network_configs, username, verbose=False
+):
+    meta_data_path = os.path.join(vm_image_dir, "init", "meta-data")
+    user_data_path = os.path.join(vm_image_dir, "init", "user-data")
+    network_config_path = os.path.join(vm_image_dir, "init", "network-config")
 
-    os.makedirs(f"{vm_image_dir}/images", exist_ok=True)
-    os.makedirs(f"{vm_image_dir}/xml", exist_ok=True)
-    os.makedirs(f"{vm_image_dir}/init", exist_ok=True)
-    os.makedirs(f"{vm_image_dir}/base", exist_ok=True)
+    print(f"Creating meta-data file {meta_data_path}")
+    with open(meta_data_path, "w") as meta_data:
+        meta_data.write(f"instance-id: {vm_name}\nlocal-hostname: {vm_name}\n")
 
-    print(f"Creating a qcow2 image file {vm_image_dir}/images/{args.n}.img that uses the cloud image file {args.i} as its base")
-    run_command(f"qemu-img create -b {args.i} -f qcow2 -F qcow2 {vm_image_dir}/images/{args.n}.img {args.s}G", args.v)
-
-    print(f"Creating meta-data file {vm_image_dir}/init/meta-data")
-    with open(f"{vm_image_dir}/init/meta-data", 'w') as meta_data:
-        meta_data.write(f"instance-id: {args.n}\nlocal-hostname: {args.n}\n")
-
-    print(f"Creating user-data file {vm_image_dir}/init/user-data")
-    with open(f"{vm_image_dir}/init/user-data", 'w') as user_data:
+    print(f"Creating user-data file {user_data_path}")
+    with open(user_data_path, "w") as user_data:
         user_data.write("#cloud-config\n\n")
         user_data.write("users:\n")
-        user_data.write("  - name: ansible\n")
-        user_data.write("    sudo: [\"ALL=(ALL) NOPASSWD:ALL\"]\n")
+        user_data.write(f"  - name: {username}\n")
+        user_data.write('    sudo: ["ALL=(ALL) NOPASSWD:ALL"]\n')
         user_data.write("    groups: sudo\n")
         user_data.write("    shell: /bin/bash\n")
-        user_data.write("    homedir: /var/ansible\n")
+        user_data.write(f"    homedir: /home/{username}\n")
         user_data.write("    ssh_authorized_keys:\n")
 
-        with open(args.k, 'r') as keys:
+        with open(pub_key_file, "r") as keys:
             for key in keys:
                 key = key.strip()
-                if not key.startswith('#'):
+                if not key.startswith("#"):
                     user_data.write(f"      - {key}\n")
 
-    print(f"Generating the cidata ISO file {vm_image_dir}/images/{args.n}-cidata.iso")
-    run_command(f"genisoimage -output {vm_image_dir}/images/{args.n}-cidata.img -volid cidata -rational-rock -joliet {vm_image_dir}/init/user-data {vm_image_dir}/init/meta-data", args.v)
+    print(
+        f"Creating network-config files for {len(network_configs)} network interfaces"
+    )
+    with open(f"{network_config_path}", "w") as network_config_file:
+        network_config_file.write(network_configs)
 
-    mac_cmd = f"--mac={args.m}" if args.m else ""
 
+def create_cidata_iso(vm_image_dir, vm_name, verbose=False):
+    user_data = os.path.join(vm_image_dir, "init", "user-data")
+    meta_data = os.path.join(vm_image_dir, "init", "meta-data")
+    network_config = os.path.join(vm_image_dir, "init", "network-config")
+    iso_path = os.path.join(vm_image_dir, "images", f"{vm_name}-cidata.iso")
+
+    cmd = f"genisoimage -output {iso_path} -volid cidata -rational-rock -joliet {user_data} {meta_data} {network_config}*"
+    print(f"Generating the cidata ISO file {iso_path}")
+    run_command(cmd, verbose)
+
+
+def install_vm(vm_image_dir, vm_name, ram, vcpus, networks, verbose=False):
+    network_cmds = " ".join(
+        [f"--network bridge={network.bridge},model=virtio,mac={network.mac}" for network in networks]
+    )
     virt_install_command = (
         f"virt-install "
-        f"--name={args.n} "
-        f"--network bridge={args.b},model=virtio {mac_cmd} "
+        f"{network_cmds} "
+        f"--name={vm_name} "
         f"--import "
-        f"--disk path={vm_image_dir}/images/{args.n}.img,format=qcow2 "
-        f"--disk path={vm_image_dir}/images/{args.n}-cidata.img,device=cdrom "
-        f"--ram={args.r} "
-        f"--vcpus={args.c} "
+        f"--disk path={vm_image_dir}/images/{vm_name}.img,format=qcow2 "
+        f"--disk path={vm_image_dir}/images/{vm_name}-cidata.iso,device=cdrom "
+        f"--ram={ram} "
+        f"--vcpus={vcpus} "
         f"--autostart "
         f"--hvm "
         f"--arch x86_64 "
@@ -130,13 +204,76 @@ def main():
         f"--debug"
     )
 
-    run_command(virt_install_command, args.v)
+    run_command(virt_install_command, verbose)
 
-    # Make a backup of the VM's XML definition file
-    run_command(f"virsh dumpxml {args.n} > {vm_image_dir}/xml/{args.n}.xml", args.v)
 
-    # Show running VMs
-    print(run_command("virsh list", args.v))
+def backup_vm_xml(vm_name, vm_image_dir, verbose=False):
+    xml_path = os.path.join(vm_image_dir, "xml", f"{vm_name}.xml")
+    cmd = f"virsh dumpxml {vm_name} > {xml_path}"
+    run_command(cmd, verbose)
+
+
+def list_running_vms(verbose=False):
+    print(run_command("virsh list", verbose))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Quickly create guest VMs using cloud image files and cloud-init.",
+        formatter_class=argparse.RawTextHelpFormatter,
+        usage=usage(),
+    )
+    parser.add_argument("-n", required=True, help="Host name")
+    parser.add_argument(
+        "-i", required=True, help="Full path and name of the base .img file to use"
+    )
+    parser.add_argument(
+        "-k",
+        required=True,
+        help="Full path and name of the ansible user's public key file",
+    )
+    parser.add_argument("-r", type=int, default=2048, help="RAM in MB")
+    parser.add_argument("-c", type=int, default=2, help="Number of VCPUs")
+    parser.add_argument(
+        "-s", type=int, default=80, help="Amount of storage to allocate in GB"
+    )
+    parser.add_argument(
+        "-b",
+        required=False,
+        action="append",
+        help="Network configuration: bridge,mac,interface,ip,gateway",
+    )
+    parser.add_argument("-u", default="ansible", help="Username for the VM")
+    parser.add_argument("-v", action="store_true", help="Verbose")
+
+    args = parser.parse_args()
+
+    vm_image_dir = os.getenv("VM_IMAGE_DIR", os.path.expanduser("~/vms/virsh"))
+
+    if not os.path.isfile(args.i):
+        print(f"ERROR: {args.i} file not found")
+        sys.exit(1)
+
+    if not os.path.isfile(args.k):
+        print(f"ERROR: ansible public key file {args.k} not found")
+        sys.exit(1)
+
+    if args.v:
+        print(f"Building {args.n} in {vm_image_dir}")
+    network_config = NetplanConfig()
+    network_config.arg_parser(args.b or ["bridge=virbr0"])
+    abc = network_config.to_yaml()
+
+    create_directories(vm_image_dir, args.v)
+    create_qcow_image(vm_image_dir, args.i, args.n, args.s, args.v)
+    create_cloud_init_files(
+        vm_image_dir, args.n, args.k, network_config.to_yaml(), args.u, args.v
+    )
+    create_cidata_iso(vm_image_dir, args.n, args.v)
+    install_vm(vm_image_dir, args.n, args.r, args.c, network_config.networks, args.v)
+    backup_vm_xml(args.n, vm_image_dir, args.v)
+    list_running_vms(args.v)
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,33 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: create-vm",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/create-vm",
+            "console": "integratedTerminal",
+            "args": [
+                "-n", "node2",
+                "-i", "/home/mehmett/vms/virsh/base/jammy-server-cloudimg-amd64.img",
+                "-k", "/home/mehmett/.ssh/id_rsa.pub",
+                "-s", "20",
+                "-b","bridge=virbr0",
+                "-b","bridge=virbr1",
+            ],
+        },
+        {
+            "name": "Python: get-vm-ip",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/get-vm-ip",
+            "console": "integratedTerminal",
+            "args": [
+                "node2",
+            ],
+        }
+    ]
+}
