@@ -211,9 +211,12 @@ wget http://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.im
 Then create the VM:
 ```
 create-vm -n node1 \
-    -i ~/vms/virsh/base/jammy-server-cloudimg-amd64.img \
-    -k ~/.ssh/id_rsa_ansible.pub \
-    -s 40
+-i ~/vms/virsh/base/jammy-server-cloudimg-amd64.img \
+-k ~/.ssh/id_rsa.pub \
+-b bridge=virbr0,ip=192.168.122.11 \
+-b bridge=virbr1,ip=192.168.100.11 \
+-s 20 \
+-u ansible
 ```
 
 Once created I can get the IP address and ssh to the VM as the user "ansible":
@@ -279,7 +282,7 @@ This starts the VM creation process and exits. Creation of the VMs continues in 
 
 ```
 for n in `seq 1 8`; do
-    create-vm -n node$n -i ~/vms/virsh/base/jammy-server-cloudimg-amd64.img -k ~/.ssh/id_rsa_ansible.pub
+    create-vm -n node$n -i ~/vms/virsh/base/jammy-server-cloudimg-amd64.img -k ~/.ssh/id_rsa.pub -b bridge=virbr0,ip=192.168.122.1$n -b bridge=virbr1,ip=192.168.100.1$n -s 20 -u ansible
 done
 ```
 
