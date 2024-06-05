@@ -1,4 +1,4 @@
-#!/usr/bin/python 
+#!/usr/bin/python3
 #   delete-vm - Delete a virtual machine created with create-vm
 
 #   Copyright 2018-2023 Earl C. Ruby III

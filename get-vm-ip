@@ -1,4 +1,4 @@
-#!/usr/bin/python 
+#!/usr/bin/python3
 #   get-node-ip - Get the IP address of a VM managed by virsh.
 
 #   Copyright 2018-2023 Earl C. Ruby III
