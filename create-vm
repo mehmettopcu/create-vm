@@ -204,7 +204,7 @@ def install_vm(vm_image_dir, vm_name, osinfo, ram, vcpus, networks, verbose=Fals
             for network in networks
         ]
     )
-    osinfo_cmds = f"--osinfo {osinfo}" if osinfo else f"--osinfo detect=on,require=off"
+    osinfo_cmds = f"--os-variant {osinfo}" if osinfo else f"--os-variant detect=on,require=off"
     virt_install_command = (
         f"virt-install "
         f"{network_cmds} "
