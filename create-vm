@@ -28,8 +28,15 @@ class Network:
         }
 
         if self.ip:
-            self.config[self.interface]["addresses"] = [f"{self.ip}/24"] if self.ip else []
-            self.config[self.interface]["routes"] = [{"to": self.via if self.via else f"{self.get_cidr()}/24","via": f"{self.gateway_ip}"}]
+            self.config[self.interface]["addresses"] = (
+                [f"{self.ip}/24"] if self.ip else []
+            )
+            self.config[self.interface]["routes"] = [
+                {
+                    "to": self.via if self.via else f"{self.get_cidr()}/24",
+                    "via": f"{self.gateway_ip}",
+                }
+            ]
             self.config[self.interface]["dhcp4"] = False
 
     def generate_gateway(self):
@@ -112,7 +119,7 @@ OPTIONS:
    -r      RAM in MB (defaults to 2048)
    -c      Number of VCPUs (defaults to 2)
    -s      Amount of storage to allocate in GB (defaults to 80)
-   -b      Network configuration: bridge,mac,interface,ip,gw (can be specified multiple times)
+   -b      Network configuration: bridge,mac,interface,ip,gw,via (can be specified multiple times)
    -u      Username for the VM (defaults to ansible)
    -v      Verbose
 """
@@ -192,9 +199,12 @@ def create_cidata_iso(vm_image_dir, vm_name, verbose=False):
 
 def install_vm(vm_image_dir, vm_name, osinfo, ram, vcpus, networks, verbose=False):
     network_cmds = " ".join(
-        [f"--network bridge={network.bridge},model=virtio,mac={network.mac}" for network in networks]
+        [
+            f"--network bridge={network.bridge},model=virtio,mac={network.mac}"
+            for network in networks
+        ]
     )
-    osinfo_cmds = f"--osinfo {osinfo}" if osinfo else f"--osinfo detect=on,require=off"
+    osinfo_cmds = f"--os-variant {osinfo}" if osinfo else f"--os-variant detect=on,require=off"
     virt_install_command = (
         f"virt-install "
         f"{network_cmds} "
@@ -237,7 +247,7 @@ def main():
         usage=usage(),
     )
     parser.add_argument("-n", required=True, help="Host name")
-    parser.add_argument("-o", required=False, help="osinfo")
+    parser.add_argument("-o", required=False, help="osinfo show cmd: virt-install --osinfo list")
     parser.add_argument(
         "-i", required=True, help="Full path and name of the base .img file to use"
     )
@@ -284,7 +294,9 @@ def main():
         vm_image_dir, args.n, args.k, network_config.to_yaml(), args.u, args.v
     )
     create_cidata_iso(vm_image_dir, args.n, args.v)
-    install_vm(vm_image_dir, args.n, args.o, args.r, args.c, network_config.networks, args.v)
+    install_vm(
+        vm_image_dir, args.n, args.o, args.r, args.c, network_config.networks, args.v
+    )
     backup_vm_xml(args.n, vm_image_dir, args.v)
     list_running_vms(args.v)
 
